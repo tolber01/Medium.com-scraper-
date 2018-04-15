@@ -1,6 +1,6 @@
 # Medium.com-scraper-
 
-This script parses, scrapes users of medium.com and write this information into the out.csv file.
+This script parses and scrapes users of medium.com, writes this information into the out.csv file.
 
 *Required modules and libs:*
 
