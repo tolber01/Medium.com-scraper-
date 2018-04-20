@@ -10,9 +10,34 @@ from bs4 import BeautifulSoup, SoupStrainer
 
 class App:
     def __init__(self):
-        START_LINK = check_files_and_start()
+        START_LINK = self.check_files_and_start()
         print("start ->", START_LINK)
         parser = Parser(START_LINK)
+
+    def check_files_and_start(self):
+        with open("reserve_urls.txt", "r") as f1: # Working with files
+            text = f1.read()
+            if text != "":
+                return random.choice(text.split("\n"))
+            else:
+                with open("used_urls.txt", "r") as f:
+                    data = f.read()
+                if data == "":
+                    with open("out.csv", "w", encoding='utf-8', newline="") as csv_file:
+                        field_names = [
+                            "Name",
+                            "Link",
+                            "Description",
+                            "Following",
+                            "Followers",
+                            "Twitter",
+                            "Facebook"
+                        ]
+                        writer = csv.DictWriter(csv_file, fieldnames=field_names)
+                        writer.writeheader()
+                with open("used_urls.txt", "r") as f:
+                    result = f.read().split("\n")[-2]
+                return result
 
 class Parser:
     def __init__(self, start):
@@ -239,32 +264,6 @@ class Parser:
             )
         ]
         return followers_links_list
-
-
-def check_files_and_start():
-    with open("reserve_urls.txt", "r") as f1: # Working with files
-        text = f1.read()
-        if text != "":
-            return random.choice(text.split("\n"))
-        else:
-            with open("used_urls.txt", "r") as f:
-                data = f.read()
-            if data == "":
-                with open("out.csv", "w", encoding='utf-8', newline="") as csv_file:
-                    field_names = [
-                        "Name",
-                        "Link",
-                        "Description",
-                        "Following",
-                        "Followers",
-                        "Twitter",
-                        "Facebook"
-                    ]
-                    writer = csv.DictWriter(csv_file, fieldnames=field_names)
-                    writer.writeheader()
-            with open("used_urls.txt", "r") as f:
-                result = f.read().split("\n")[-2]
-            return result
 
 if __name__ == "__main__":  # Main process
     main = App()
