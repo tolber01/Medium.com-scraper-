@@ -1,46 +1,39 @@
 #!../Scripts/python.exe
-import requests
 import random
-import csv
 import time
+import csv
 import json
 from multiprocessing.dummy import Pool as ThreadPool
-from fake_useragent import UserAgent
+import requests
 from bs4 import BeautifulSoup, SoupStrainer
+from fake_useragent import UserAgent
+from constants import Const as const
 
 
 class App:
     def __init__(self):
-        START_LINK = self.check_files_and_start()
-        print("start ->", START_LINK)
-        parser = Parser(START_LINK)
+        start_url = self.check_files_and_start()
+        print("start ->", start_url)
+        parser = Parser(start_url)
 
     def check_files_and_start(self):
-        with open("reserve_urls.txt", "r") as reserve_urls_file: # Working with files
+        with open(const.RESERVE_URLS_PATH, "r") as reserve_urls_file: # Working with files
             reserve_urls_text = reserve_urls_file.read()
 
             if reserve_urls_text:
                 return random.choice(reserve_urls_text.split("\n"))
             else:
-                with open("used_urls.txt", "r") as used_urls_file:
+                with open(const.USED_URLS_PATH, "r") as used_urls_file:
                     used_urls_text = used_urls_file.read()
 
                 if not used_urls_text:
-                    with open("out.csv", "w", encoding='utf-8', newline="") as csv_file:
-                        field_names = [
-                            "Name",
-                            "Link",
-                            "Description",
-                            "Following",
-                            "Followers",
-                            "Twitter",
-                            "Facebook"
-                        ]
+                    with open(cosnt.OUT_PATH, "w", encoding=const.CSV_ENCODING, newline="") as csv_file:
+                        field_names = const.DEFAULT_FIELDS
                         writer = csv.DictWriter(csv_file, fieldnames=field_names)
                         writer.writeheader()
 
-                with open("used_urls.txt", "r") as used_urls_file:
-                    last_used_url = used_urls_file.read().split("\n")[-2]
+                with open(const.USED_URLS_PATH, "r") as used_urls_file:
+                    last_used_url = used_urls_file.read().split("\n")[-3]
 
                 return last_used_url
 
@@ -51,62 +44,114 @@ class Parser:
         self.user_agents = self.get_user_agents_list()  # Collecting User-Agents
         print("done")
         
-        self.pool = ThreadPool(50)  # Creating Pool object of multiprocessing
+        self.pool = ThreadPool(const.THREADS_NUMBER)  # Creating Pool object of multiprocessing based on threads
 
-        self.current_urls = self.get_followers_or_following(  # Collecting basic list of urls
-            start + "/following",
-            self.get_html(start + "/following")
-        )
-        self.current_urls.extend(
-            self.get_followers_or_following(
-                start + "/followers",
-                self.get_html(start + "/followers")
-            )
-        )
+        self.current_urls = self.get_basic_urls(start)  # Collecting basic list of urls
         print(self.current_urls)
 
         self.new_urls = []  # Extra list is necessary in the code
 
-        with open("used_urls.txt", "r") as f:  # Reading used urls from .txt file
-            self.used_urls = f.read().split("\n")
+        with open(const.USED_URLS_PATH, "r") as used_urls_file:  # Reading used urls from .txt file
+            self.used_urls = used_urls_file.read().split("\n")
         self.counter = 0
 
         while True:  # Main loop
-            self.main_loop()  # Main function of the loop
+            self.main_loop_iteration()  # Main function of the loop
+
+    def get_user_agents_list(self):  # Loading User-Agents from .json file
+        json_file_data = json.load(open(const.JSON_UA_PATH))
+        user_agents_list = []
+        for piece_of_data in json_file_data["useragentswitcher"]["folder"]:
+            try:
+                for user_agent in piece_of_data["useragent"]:
+                    user_agents_list.append(user_agent["-useragent"])
+            except KeyError:
+                pass
+        return user_agents_list
+
+    def get_basic_urls(self, start_url):
+        basic_urls = self.get_followers_or_following(
+            start_url + "/following",
+            self.get_html(start_url + "/following")
+        )
+        basic_urls.extend(
+            self.get_followers_or_following(
+                start_url + "/followers",
+                self.get_html(start_url + "/followers")
+            )
+        )
+        return basic_urls
+
+    def get_followers_or_following(self, url_to_followers, html): 
+        # Get new urls from following and followers
+        only_a_tags = SoupStrainer(const.A_TAG)
+        a_soup = BeautifulSoup(
+            html, 
+            "lxml", 
+            parse_only=only_a_tags
+        )
+        followers_links_list = [
+            link.get("href") for link in a_soup.find_all(
+                const.A_TAG,
+                {"class": const.A_FOLLOW_CLASS}
+            )
+        ]
+        return followers_links_list
+
+    def get_html(self, url_to_html):  # Request -> response -> html
+        try:
+            html_code = requests.get(
+                url=url_to_html,
+                headers={"User-Agent": self.fake_ua.random}
+            ).text
+        except:
+            try:
+                html_code = requests.get(
+                    url=url_to_html,
+                    headers={"User-Agent": random.choice(self.user_agents)}
+                ).text
+                return html_code
+            except:
+                return self.get_html(url_to_html)
+        else:
+            return html_code
     
-    def main_loop(self):
+    def main_loop_iteration(self):
         self.pool.map(self.parse, self.current_urls)  # Using multiprocessing for current urls
 
         self.current_urls = self.new_urls  # Replacing current urls with new urls
 
-        with open("used_urls.txt", "w") as f2:  # Write new used urls to .txt file
-            f2.write("\n".join(self.used_urls))
-        with open("reserve_urls.txt", "w") as f3:  # Write reserve urls to .txt file
-            f3.write("\n".join(self.current_urls))
+        with open(const.USED_URLS_PATH, "w") as used_urls_file:  # Write new used urls to .txt file
+            used_urls_file.write("\n".join(self.used_urls))
+        with open(const.RESERVE_URLS_PATH, "w") as reserve_urls_file:  # Write reserve urls to .txt file
+            reserve_urls_file.write("\n".join(self.current_urls))
 
         print("Current urls ->", len(self.current_urls))  # Print number of available urls
 
-        time.sleep(3)  # 3 second timeout
+        time.sleep(const.ITERATION_TIMEOUT)  # Iteration timeout (default = 3s)
     
     def parse(self, profile_url):
         if profile_url in self.used_urls:
             print("used")  # Checking url
             return
-        self.used_urls.append(profile_url)  # New used url
-        with open("used_urls.txt", "a") as used_urls_file:
+        else:
+            self.used_urls.append(profile_url)  # New used url
+
+        with open(const.USED_URLS_PATH, "a") as used_urls_file:
             used_urls_file.write(profile_url + "\n")
 
         following_url = profile_url + "/following"
         followers_url = profile_url + "/followers"
 
-        html_of_user = self.get_html(profile_url)  # Get html code of user
+        html_of_user = self.get_html(profile_url)  # Get html code of user, following & followers pages
         html_of_following = self.get_html(following_url)
         html_of_followers = self.get_html(followers_url)
 
         if html_of_user is None:
             return
-        only_div_tags = SoupStrainer("div")  # Generating tag keys for a beautiful soup
-        only_link_tags = SoupStrainer("a")
+
+        only_div_tags = SoupStrainer(const.DIV_TAG)  # Generating tag keys for a beautiful soup
+        only_link_tags = SoupStrainer(const.A_TAG)
 
         header_soup = BeautifulSoup(  # Generating BeautifulSoup object
             html_of_user,
@@ -124,13 +169,7 @@ class Parser:
             parse_only=only_link_tags
         )
         
-        try:  # Scraping user's name
-            hero_name = header_soup.find(
-                "h1"
-            ).text
-        except AttributeError:
-            print("doesn't parse")
-            return self.parse(profile_url)
+        hero_name = self.get_user_name(header_soup, profile_url)
         
         hero_description = self.get_user_description(header_soup)
 
@@ -155,129 +194,95 @@ class Parser:
         self.counter += 1
         print(self.counter)
         
-        user = {  # Making user dictionary
-            "Name": hero_name,
-            "Link": profile_url,
-            "Description": hero_description,
-            "Following": following_people_quantity,
-            "Followers": followers_quantity,
-            "Twitter": twitter_url,
-            "Facebook": facebook_url
-        }
+
+        user = dict(zip(
+                const.DEFAULT_FIELDS, 
+                [
+                    hero_name,
+                    profile_url,
+                    hero_description,
+                    following_people_quantity,
+                    followers_quantity,
+                    twitter_url,
+                    facebook_url
+                ]
+        ))
         self.write_to_csv(user)
+
+    def get_user_name(self, soup, current_url):
+        try:  # Scraping user's name
+            name = soup.find(const.H1_TAG).text
+        except AttributeError:
+            print("doesn't parse")
+            return self.parse(current_url)
+        else:
+            return name
 
     def get_user_description(self, soup):
         try:  # Scraping user's description
             hero_description = soup.find(
                 "p",
-                {"class": "bx by w b x bz ca ab ac"}
+                {"class": const.P_DESCRIPTION_CLASS}
             ).text
-            return hero_description
         except AttributeError:
             return ""
+        else:
+            return hero_description
 
     def get_number_of_following(self, soup):
         try:  # Scraping number of following
             following_people_quantity = int(
                 soup.find(
                     "a",
-                    {"data-action-value": "following"}
+                    {"data-action-value": const.DATA_ACTION_FOLLOWING}
                 ).get("title").split()[1].replace(",", "")
             )
-            return following_people_quantity
         except AttributeError:
-            return None 
+            return None
+        else:
+            return following_people_quantity
 
     def get_number_of_followers(self, soup):
         try:  # Scraping number of followers
             followers_quantity = int(
                 soup.find(
                     "a",
-                    {"data-action-value": "followers"}
+                    {"data-action-value": const.DATA_ACTION_FOLLOWERS}
                 ).get("title").split()[1].replace(",", "")  
             )
-            return followers_quantity
         except AttributeError:
             return None
+        else:
+            return followers_quantity
 
     def get_twitter_url(self, soup):
         try:  # Scraping twitter url
             twitter = soup.find(
                 "a",
-                {"title": "Twitter"}
+                {"title": const.TITLE_TWITTER}
             ).get("href")
-            return twitter
         except AttributeError:
-            return None 
+            return None
+        else:
+            return twitter
 
     def get_facebook_url(self, soup):
         try:  # Scraping facebook url
             facebook_url = soup.find(
                 "a",
-                {"title": "Facebook"}
+                {"title": const.TITLE_FACEBOOK}
             ).get("href")
-            return facebook_url
         except AttributeError:
             return None
-
-    def get_user_agents_list(self):  # Loading User-Agents from .json file
-        json_file_data = json.load(open("user_agents.json"))
-        user_agents_list = []
-        for piece_of_data in json_file_data["useragentswitcher"]["folder"]:
-            try:
-                for user_agent in piece_of_data["useragent"]:
-                    user_agents_list.append(user_agent["-useragent"])
-            except KeyError:
-                pass
-        return user_agents_list
+        else:
+            return facebook_url
 
     def write_to_csv(self, user):  # Write user to .csv table
-        with open("out.csv", "a", encoding="utf-8", newline="") as csv_file:
-            field_names = [
-                "Name",
-                "Link",
-                "Description",
-                "Following",
-                "Followers",
-                "Twitter",
-                "Facebook"
-            ]
+        with open(const.OUT_PATH, "a", encoding=const.CSV_ENCODING, newline="") as csv_file:
+            field_names = const.DEFAULT_FIELDS
             writer = csv.DictWriter(csv_file, fieldnames=field_names)
             writer.writerow(user)
 
-    def get_html(self, url_to_html):  # Request -> response -> html
-        try:
-            html_code = requests.get(
-                url=url_to_html,
-                headers={"User-Agent": self.fake_ua.random}
-            ).text
-        except:
-            try:
-                html_code = requests.get(
-                    url=url_to_html,
-                    headers={"User-Agent": random.choice(self.user_agents)}
-                ).text
-                return html_code
-            except:
-                return self.get_html(url_to_html)
-        else:
-            return html_code
-
-    def get_followers_or_following(self, url_to_followers, html): 
-        # Get new urls from following and followers
-        only_a_tags = SoupStrainer("a")
-        a_soup = BeautifulSoup(
-            html, 
-            "lxml", 
-            parse_only=only_a_tags
-        )
-        followers_links_list = [
-            link.get("href") for link in a_soup.find_all(
-                "a",
-                {"class": "avatar"}
-            )
-        ]
-        return followers_links_list
 
 if __name__ == "__main__":  # Main process
     main = App()
