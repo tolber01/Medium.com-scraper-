@@ -4,7 +4,6 @@ import random
 import csv
 import time
 import json
-# from multiprocessing import Pool as ThreadPool
 from multiprocessing.dummy import Pool as ThreadPool
 from fake_useragent import UserAgent
 from bs4 import BeautifulSoup, SoupStrainer
@@ -12,18 +11,47 @@ from bs4 import BeautifulSoup, SoupStrainer
 
 class App:
     def __init__(self):
-        START_LINK = check_files_and_start()
+        START_LINK = self.check_files_and_start()
         print("start ->", START_LINK)
         parser = Parser(START_LINK)
 
+    def check_files_and_start(self):
+        with open("reserve_urls.txt", "r") as reserve_urls_file: # Working with files
+            reserve_urls_text = reserve_urls_file.read()
+
+            if reserve_urls_text:
+                return random.choice(reserve_urls_text.split("\n"))
+            else:
+                with open("used_urls.txt", "r") as used_urls_file:
+                    used_urls_text = used_urls_file.read()
+
+                if not used_urls_text:
+                    with open("out.csv", "w", encoding='utf-8', newline="") as csv_file:
+                        field_names = [
+                            "Name",
+                            "Link",
+                            "Description",
+                            "Following",
+                            "Followers",
+                            "Twitter",
+                            "Facebook"
+                        ]
+                        writer = csv.DictWriter(csv_file, fieldnames=field_names)
+                        writer.writeheader()
+
+                with open("used_urls.txt", "r") as used_urls_file:
+                    last_used_url = used_urls_file.read().split("\n")[-2]
+
+                return last_used_url
+
 class Parser:
     def __init__(self, start):
-        self.ua = UserAgent()
         print("collecting User-Agents...")
+        self.fake_ua = UserAgent()
         self.user_agents = self.get_user_agents_list()  # Collecting User-Agents
         print("done")
         
-        self.pool = ThreadPool(10)  # Creating Pool object of multiprocessing
+        self.pool = ThreadPool(50)  # Creating Pool object of multiprocessing
 
         self.current_urls = self.get_followers_or_following(  # Collecting basic list of urls
             start + "/following",
@@ -65,8 +93,8 @@ class Parser:
             print("used")  # Checking url
             return
         self.used_urls.append(profile_url)  # New used url
-        with open("used_urls.txt", "a") as f:
-            f.write(profile_url + "\n")
+        with open("used_urls.txt", "a") as used_urls_file:
+            used_urls_file.write(profile_url + "\n")
 
         following_url = profile_url + "/following"
         followers_url = profile_url + "/followers"
@@ -77,31 +105,28 @@ class Parser:
 
         if html_of_user is None:
             return
-        only_header_tags = SoupStrainer("div")  # Generating tag keys for a beautiful soup
-        only_buttonset_class = SoupStrainer(
-            "a"
-        )
-        header_soup = BeautifulSoup(
+        only_div_tags = SoupStrainer("div")  # Generating tag keys for a beautiful soup
+        only_link_tags = SoupStrainer("a")
+
+        header_soup = BeautifulSoup(  # Generating BeautifulSoup object
             html_of_user,
             "lxml",
-            parse_only=only_header_tags
+            parse_only=only_div_tags
         )
         buttonset_soup_following = BeautifulSoup(
             html_of_following,
             "lxml",
-            parse_only=only_buttonset_class
+            parse_only=only_link_tags
         )
         buttonset_soup_followers = BeautifulSoup(
             html_of_followers,
             "lxml",
-            parse_only=only_buttonset_class
+            parse_only=only_link_tags
         )
         
         try:  # Scraping user's name
             hero_name = header_soup.find(
-                "h1",
-                # ["h1", "h2", "h3", "h4"],
-                # {"class": "bq br w bs x bt bu bv ac"}
+                "h1"
             ).text
         except AttributeError:
             print("doesn't parse")
@@ -129,6 +154,7 @@ class Parser:
 
         self.counter += 1
         print(self.counter)
+        
         user = {  # Making user dictionary
             "Name": hero_name,
             "Link": profile_url,
@@ -195,18 +221,18 @@ class Parser:
             return None
 
     def get_user_agents_list(self):  # Loading User-Agents from .json file
-        data = json.load(open("user_agents.json"))
-        result = []
-        for piece_of_data in data["useragentswitcher"]["folder"]:
+        json_file_data = json.load(open("user_agents.json"))
+        user_agents_list = []
+        for piece_of_data in json_file_data["useragentswitcher"]["folder"]:
             try:
                 for user_agent in piece_of_data["useragent"]:
-                    result.append(user_agent["-useragent"])
+                    user_agents_list.append(user_agent["-useragent"])
             except KeyError:
                 pass
-        return result
+        return user_agents_list
 
     def write_to_csv(self, user):  # Write user to .csv table
-        with open("out.csv", "a", encoding='utf-8', newline="") as csv_file:
+        with open("out.csv", "a", encoding="utf-8", newline="") as csv_file:
             field_names = [
                 "Name",
                 "Link",
@@ -221,26 +247,21 @@ class Parser:
 
     def get_html(self, url_to_html):  # Request -> response -> html
         try:
-            result = requests.get(
+            html_code = requests.get(
                 url=url_to_html,
-                headers={"User-Agent": self.ua.random,
-                    #"Accept": "application/json"
-                    }
+                headers={"User-Agent": self.fake_ua.random}
             ).text
         except:
             try:
-                result = requests.get(
+                html_code = requests.get(
                     url=url_to_html,
-                    headers={"User-Agent": random.choice(self.user_agents),
-                    # "Accept": "application/json"
-                    },
-                    # timeout=(10, 0.01)
+                    headers={"User-Agent": random.choice(self.user_agents)}
                 ).text
-                return result
+                return html_code
             except:
                 return self.get_html(url_to_html)
         else:
-            return result
+            return html_code
 
     def get_followers_or_following(self, url_to_followers, html): 
         # Get new urls from following and followers
@@ -257,32 +278,6 @@ class Parser:
             )
         ]
         return followers_links_list
-
-
-def check_files_and_start():
-    with open("reserve_urls.txt", "r") as f1: # Working with files
-        text = f1.read()
-        if text != "":
-            return random.choice(text.split("\n"))
-        else:
-            with open("used_urls.txt", "r") as f:
-                data = f.read()
-            if data == "":
-                with open("out.csv", "w", encoding='utf-8', newline="") as csv_file:
-                    field_names = [
-                        "Name",
-                        "Link",
-                        "Description",
-                        "Following",
-                        "Followers",
-                        "Twitter",
-                        "Facebook"
-                    ]
-                    writer = csv.DictWriter(csv_file, fieldnames=field_names)
-                    writer.writeheader()
-            with open("used_urls.txt", "r") as f:
-                result = f.read().split("\n")[-2]
-            return result
 
 if __name__ == "__main__":  # Main process
     main = App()
